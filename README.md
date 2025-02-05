@@ -2,4 +2,4 @@
 
 To be continued
 
-![Interpolation](test.gif)
+![Interpolation](assets/interpolation.gif)
