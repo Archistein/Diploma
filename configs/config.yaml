@@ -1,0 +1,10 @@
+seed: 42
+img_height: 160
+img_width: 144
+img_channels: 1
+calc_mean: 0.4377
+calc_std: 0.2722
+latent_dim: 512
+batch_size: 128
+params_path: ../params/weights/weights.pt
+directions_path: ../params/directions/grouped_directions.pkl

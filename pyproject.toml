@@ -1,0 +1,28 @@
+[project]
+name = "photorobot-vae"
+version = "0.1.0"
+description = "Application for automated facial composite generation"
+authors = [
+    {name = "Archistein",email = "turods@yandex.ru"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "albumentations (==2.0.5)",
+    "datasets (==3.2.0)",
+    "numpy (==2.2.4)",
+    "omegaconf (==2.3.0)",
+    "opencv-python-headless (==4.11.0.86)",
+    "pillow (==11.2.1)",
+    "pyqt6 (==6.9.0)",
+    "pyqt6-sip (==13.10.0)",
+    "torch (==2.6.0)",
+    "torchvision (==0.21.0)"
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+package-mode = false
