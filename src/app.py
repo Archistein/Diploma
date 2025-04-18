@@ -26,12 +26,12 @@ class OptimizationParams(QWidget):
 
     def __init__(
         self, 
-        alpha: float, 
-        beta: float, 
-        gamma: float,
-        delta: float, 
-        lr: float, 
-        steps: int
+        alpha: float = 1e-1, 
+        beta: float = 1, 
+        gamma: float = 1e-4,
+        delta: float = 1e-4, 
+        lr: float = 0.02, 
+        steps: int = 100
     ) -> None:
         """Initializes the UI and parameters
 
@@ -237,7 +237,7 @@ class PhotorobotApp(QMainWindow):
         self.progress_updated.connect(self.update_progress)
         self.add_slider_signal.connect(self.add_custom_slider)
 
-        self.params = OptimizationParams(alpha=1e-1, beta=1, gamma=1e-4, delta=1e-4, steps=100, lr=0.02)
+        self.params = OptimizationParams()
 
         self.init_ui()
 
