@@ -1,15 +1,14 @@
+from typing import Optional
 import sys
 import os
 import pickle
 import threading
 import io
-
 import numpy as np
 import cv2
 from PIL import Image, ImageOps
 from omegaconf import OmegaConf
 import torch
-
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QApplication, QWidget, QTabWidget, 
     QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
@@ -17,34 +16,57 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPixmap, QImage, QPen, QPainter, QColor, QIcon
 from PyQt6.QtCore import Qt, QEvent, QPoint, pyqtSignal
-
 from model import VAE
 from train import extract_features
 import utils
 
 
 class OptimizationParams(QWidget):
-    def __init__(self, alpha: float, beta: float, gamma: float, delta: float, lr: float, steps: int, ) -> None:
+    """A PyQt widget for configuring and displaying optimization parameters"""
+
+    def __init__(
+        self, 
+        alpha: float, 
+        beta: float, 
+        gamma: float,
+        delta: float, 
+        lr: float, 
+        steps: int
+    ) -> None:
+        """Initializes the UI and parameters
+
+        Args:
+            alpha (float): Weight for the first L1 loss term in the search loss function
+            beta (float): Weight for the second L1 loss term in the search loss function
+            gamma (float): Weight for the third L1 loss term in the search loss function
+            delta (float): Weight for the L2 loss term in the search loss function
+            lr (float): Learning rate for the optimization process
+            steps (int): Number of optimization steps
+        """
+
         super().__init__()
 
-        self.steps = steps
         self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
         self.delta = delta
         self.lr = lr
+        self.steps = steps
 
         self.init_ui()
 
-    def init_ui(self):
+    def init_ui(self) -> None:
+        """Initializes the user interface"""
+
         main_layout = QVBoxLayout()
 
-        loss_formula = QLabel("ℒ = -α⋅L<sub>1</sub>(x<sub>opt</sub>⋅M - x<sub>init</sub>⋅M) "
-        "+ β⋅L<sub>1</sub>(x<sub>opt</sub>⋅(1-M) - x<sub>init</sub>⋅(1-M)) "
-        "+ γ⋅L<sub>1</sub>(z<sub>opt</sub> - z<sub>init</sub>) "
-        "+ δ⋅L<sub>2</sub>(W)")
-        loss_formula.setStyleSheet("font-family: \"Times New Roman\", Times, serif;font-size: 20px")
-        main_layout.addWidget(loss_formula)
+        search_loss_path = os.path.join(os.path.dirname(__file__), '../assets/search_loss.html')
+        with open(search_loss_path, "r", encoding="utf-8") as f:
+            search_loss = f.read()
+
+        search_loss_label = QLabel(f'<center>Search loss function:<br>{search_loss}</center>')
+        search_loss_label.setStyleSheet("font-family: \"Times New Roman\", Times, serif;font-size: 20px")
+        main_layout.addWidget(search_loss_label)
 
         steps_layout = QHBoxLayout()
         steps_layout.addWidget(QLabel("Steps:"))
@@ -85,27 +107,75 @@ class OptimizationParams(QWidget):
         self.save_button = QPushButton('Save')
         self.save_button.clicked.connect(self.save_params)
 
-        main_layout.addLayout(steps_layout)
-        main_layout.addLayout(alpha_layout)
-        main_layout.addLayout(beta_layout)
-        main_layout.addLayout(gamma_layout)
-        main_layout.addLayout(delta_layout)
-        main_layout.addLayout(lr_layout)
+        layouts = [steps_layout, alpha_layout, beta_layout, gamma_layout, delta_layout, lr_layout]
+        for layout in layouts:
+            main_layout.addLayout(layout)
         main_layout.addWidget(self.save_button)
 
         self.setLayout(main_layout)
         self.setWindowTitle("Optimization Params")
         self.resize(400, 300)
 
-    def save_params(self):
-        self.steps = int(self.steps_field.text())
-        self.alpha = float(self.alpha_field.text())
-        self.beta = float(self.beta_field.text())
-        self.gamma = float(self.gamma_field.text())
-        self.delta = float(self.delta_field.text())
-        self.lr = float(self.lr_field.text())
+    def __check_field(
+        self, 
+        text: str, 
+        field_name: str, 
+        target_type: type, 
+        min_val: Optional[float] = None, 
+        max_val: Optional[float] = None
+    ) -> int | float:
+        """Validates and converts a field value.
+    
+        Args:
+            text (str): The text input from the field
+            field_name (str): Name of the field for error messages
+            target_type (type): Desired type
+            min_val (float): Minimum allowed value (inclusive), optional
+            max_val (float): Maximum allowed value (inclusive), optional
+        
+        Returns:
+            The converted value (int or float).
+            
+        Raises:
+            ValueError: If the field is empty, not convertible, or out of range.
+        """
 
-        self.close()
+        if not text.strip():
+            raise ValueError(f"{field_name} field cannot be empty")
+        
+        try:
+            value = target_type(text)
+        except ValueError:
+            raise ValueError(f"{field_name} must be a valid {target_type.__name__}")
+        
+        if min_val is not None and value < min_val:
+            raise ValueError(f"{field_name} must be at least {min_val}")
+        if max_val is not None and value > max_val:
+            raise ValueError(f"{field_name} must be at most {max_val}")
+            
+        return value
+
+    def save_params(self) -> None:
+        """Saves the parameters after validation"""
+
+        try:
+            self.steps = self.__check_field(self.steps_field.text(), "Steps", int, min_val=1)
+            self.alpha = self.__check_field(self.alpha_field.text(), "Alpha", float, min_val=0)
+            self.beta = self.__check_field(self.beta_field.text(), "Beta", float, min_val=0)
+            self.gamma = self.__check_field(self.gamma_field.text(), "Gamma", float, min_val=0)            
+            self.delta = self.__check_field(self.delta_field.text(), "Delta", float, min_val=0)           
+            self.lr = self.__check_field(self.lr_field.text(), "Learning rate", float, min_val=1e-10, max_val=0.1)
+            
+            self.close()
+            
+        except ValueError as e:
+            # Handle invalid input (non-numeric or out of range)
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Invalid Input", str(e))
+        except Exception as e:
+            # Handle any other unexpected errors
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
 
 
 class SaveDialog(QDialog):
@@ -254,7 +324,7 @@ class PhotorobotApp(QMainWindow):
             scroll.setWidgetResizable(True)
             scroll.setWidget(tab)
             
-            self.tabs.addTab(scroll, self.invert_icon(f"icons/{group.lower()}.png"), group)
+            self.tabs.addTab(scroll, self.invert_icon(f"assets/icons/{group.lower()}.png"), group)
 
         right_layout.addWidget(self.tabs)
 
@@ -541,8 +611,6 @@ class PhotorobotApp(QMainWindow):
         )
 
         self.label.pixmap().save(file_name)
-
-
 
     def sample(self):
         self.z = torch.randn(self.latent_dim)
