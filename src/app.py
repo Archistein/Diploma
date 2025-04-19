@@ -55,6 +55,24 @@ class OptimizationParams(QWidget):
 
         self.init_ui()
 
+    def __create_field(self, label: str, value: float | int) -> tuple[QHBoxLayout, QLineEdit]:
+        """Creates a horizontal layout with label and a QLineEdit field
+
+        Args:
+            label (str): The text to display in the QLabel
+            value (float | int): The initial value to set in the QLineEdit field
+
+        Returns:
+            tuple[QHBoxLayout, QLineEdit]: A tuple containing the created layout and the QLineEdit field
+        """
+
+        layout = QHBoxLayout()
+        layout.addWidget(QLabel(label))
+        field = QLineEdit()
+        field.setText(str(value))
+        layout.addWidget(field)
+        return layout, field
+
     def init_ui(self) -> None:
         """Initializes the user interface"""
 
@@ -64,45 +82,16 @@ class OptimizationParams(QWidget):
         with open(search_loss_path, "r", encoding="utf-8") as f:
             search_loss = f.read()
 
-        search_loss_label = QLabel(f'<center>Search loss function:<br>{search_loss}</center>')
+        search_loss_label = QLabel(search_loss)
         search_loss_label.setStyleSheet("font-family: \"Times New Roman\", Times, serif;font-size: 20px")
         main_layout.addWidget(search_loss_label)
 
-        steps_layout = QHBoxLayout()
-        steps_layout.addWidget(QLabel("Steps:"))
-        self.steps_field = QLineEdit()
-        self.steps_field.setText(str(self.steps))
-        steps_layout.addWidget(self.steps_field)
-
-        alpha_layout = QHBoxLayout()
-        alpha_layout.addWidget(QLabel("Alpha:"))
-        self.alpha_field = QLineEdit()
-        self.alpha_field.setText(str(self.alpha))
-        alpha_layout.addWidget(self.alpha_field)
-
-        beta_layout = QHBoxLayout()
-        beta_layout.addWidget(QLabel("Beta:"))
-        self.beta_field = QLineEdit()
-        self.beta_field.setText(str(self.beta))
-        beta_layout.addWidget(self.beta_field)
-
-        gamma_layout = QHBoxLayout()
-        gamma_layout.addWidget(QLabel("Gamma:"))
-        self.gamma_field = QLineEdit()
-        self.gamma_field.setText(str(self.gamma))
-        gamma_layout.addWidget(self.gamma_field)
-
-        delta_layout = QHBoxLayout()
-        delta_layout.addWidget(QLabel("Delta:"))
-        self.delta_field = QLineEdit()
-        self.delta_field.setText(str(self.delta))
-        delta_layout.addWidget(self.delta_field)
-
-        lr_layout = QHBoxLayout()
-        lr_layout.addWidget(QLabel("Learning rate:"))
-        self.lr_field = QLineEdit()
-        self.lr_field.setText(str(self.lr))
-        lr_layout.addWidget(self.lr_field)
+        steps_layout, self.steps_field = self.__create_field("Steps:", self.steps)
+        alpha_layout, self.alpha_field = self.__create_field("Alpha:", self.alpha)
+        beta_layout, self.beta_field = self.__create_field("Beta:", self.beta)
+        gamma_layout, self.gamma_field = self.__create_field("Gamma:", self.gamma)
+        delta_layout, self.delta_field = self.__create_field("Delta:", self.delta)
+        lr_layout, self.lr_field = self.__create_field("Learning rate:", self.lr)
 
         self.save_button = QPushButton('Save')
         self.save_button.clicked.connect(self.save_params)
@@ -124,7 +113,7 @@ class OptimizationParams(QWidget):
         min_val: Optional[float] = None, 
         max_val: Optional[float] = None
     ) -> int | float:
-        """Validates and converts a field value.
+        """Validates and converts a field value
     
         Args:
             text (str): The text input from the field
@@ -134,10 +123,10 @@ class OptimizationParams(QWidget):
             max_val (float): Maximum allowed value (inclusive), optional
         
         Returns:
-            The converted value (int or float).
+            The converted value (int or float)
             
         Raises:
-            ValueError: If the field is empty, not convertible, or out of range.
+            ValueError: If the field is empty, not convertible, or out of range
         """
 
         if not text.strip():
@@ -179,7 +168,9 @@ class OptimizationParams(QWidget):
 
 
 class SaveDialog(QDialog):
-    def __init__(self):
+    """A QDialog for saving directions"""
+
+    def __init__(self) -> None:
         super().__init__()
 
         self.setWindowTitle("Save direction")
@@ -200,7 +191,8 @@ class SaveDialog(QDialog):
         self.setLayout(layout)
 
 
-class PhotorobotApp(QMainWindow):  
+class PhotorobotApp(QMainWindow):
+    """A main app window"""
     
     optimization_update = pyqtSignal()
     progress_updated = pyqtSignal(int) 
