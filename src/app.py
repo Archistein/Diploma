@@ -222,8 +222,10 @@ class PhotorobotApp(QMainWindow):
         self.vae = vae
         self.device = device
         self.latent_dim = config['latent_dim']
-        self.img_width = int(2.5 * config['img_width'])
-        self.img_height = int(2.5 * config['img_height'])
+        self.base_img_width = config['img_width']
+        self.base_img_height = config['img_height']
+        self.img_width = int(2.5 * self.base_img_width)
+        self.img_height = int(2.5 * self.base_img_height)
 
         self.grouped_directions = grouped_directions | {'Custom': {}}
         self.grouped_directions_coeff = {g: dict.fromkeys(d, 0) for g, d in grouped_directions.items()} | {'Custom': {}}
@@ -278,10 +280,10 @@ class PhotorobotApp(QMainWindow):
                 ("Reset Z", self.zero_z)
             ],
             "Search": [
-                ("Select", self.paint),
+                ("Select", self.toggle_paint_mode),
                 ("Params", self.set_optimization_params),
                 None,  # Separator
-                ("Optimize", self.start_optimization)
+                ("Optimize", self.start_search_direction)
             ]
         }
 
@@ -379,7 +381,7 @@ class PhotorobotApp(QMainWindow):
                 slider = QSlider(Qt.Orientation.Horizontal)
                 slider.setRange(-200, 200)
                 slider.setValue(0)
-                slider.valueChanged.connect(lambda value, g=group, d=direction: self.update_direction(value, g, d))
+                slider.valueChanged.connect(lambda value, g=group, d=direction: self.update_direction_coeff(value, g, d))
                 slider_layout.addWidget(slider)
                 self.right_sliders[f'{group}_{direction}'] = slider
                 tab_layout.addLayout(slider_layout)
@@ -412,11 +414,25 @@ class PhotorobotApp(QMainWindow):
 
         return qimg
     
-    def update_direction(self, value: int, group: str, direction: str) -> None:
+    def update_direction_coeff(self, value: int, group: str, direction: str) -> None:
+        """Updates the direction coefficient in a specified group
+        
+        Args:
+            value (int): The coefficient value as an integer percentage
+            group (str): The group name where the direction coefficient should be updated
+            direction (str): The specific direction within the group to update
+        """
+
         self.grouped_directions_coeff[group][direction] = value / 100.0
         self.update_image()
 
-    def update_brush_size(self, value):
+    def update_brush_size(self, value: int) -> None:
+        """Updates brush size
+        
+        Args:
+            value (int): The brush size value
+        """
+
         self.brush_size = value
 
     def eventFilter(self, source: QObject, event: QEvent) -> bool:
@@ -448,13 +464,23 @@ class PhotorobotApp(QMainWindow):
     
         return super().eventFilter(source, event)
 
-    def map_to_pixmap(self, pos):
+    def map_to_pixmap(self, pos: QPoint) -> QPoint:
+        """Maps a position from the QLabel coordinate space to the corresponding coordinates 
+        within the displayed QPixmap, taking into account center alignment
+
+        Args:
+            pos (QPoint): The position in the QLabel's coordinate space to map
+
+        Returns:
+            (QPoint): The corresponding position within the QPixmap, clamped to its bounds
+        """
+
         pixmap_rect = self.pixmap.rect()
-        label_rect = self.image.rect()
+        image_rect = self.image.rect()
         
         # Сonsidering (AlignmentFlag.AlignCenter)
-        pixmap_x = (label_rect.width() - pixmap_rect.width()) // 2
-        pixmap_y = (label_rect.height() - pixmap_rect.height()) // 2
+        pixmap_x = (image_rect.width() - pixmap_rect.width()) // 2
+        pixmap_y = (image_rect.height() - pixmap_rect.height()) // 2
         
         mapped_x = pos.x() - pixmap_x
         mapped_y = pos.y() - pixmap_y
@@ -465,7 +491,12 @@ class PhotorobotApp(QMainWindow):
         
         return QPoint(mapped_x, mapped_y)
 
-    def draw_on_mask(self, position):
+    def draw_on_mask(self, position: QPoint) -> None:
+        """Draws on the binary mask using the current brush settings
+
+        Args:
+            position (QPoint): The current position of the cursor where drawing is applied
+        """
         painter = QPainter(self.bin_mask)
         pen = QPen(QColor(255, 255, 255, 255), self.brush_size, Qt.PenStyle.SolidLine, 
                 Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
@@ -479,8 +510,9 @@ class PhotorobotApp(QMainWindow):
         painter.end()
         self.display_image()
 
-    def display_image(self):
-        # Combine mask and image
+    def display_image(self) -> None:
+        """Displays the current image with a semi-transparent binary mask overlay"""
+
         result_pixmap = QPixmap(self.pixmap)
         painter = QPainter(result_pixmap)
         painter.setOpacity(0.6)
@@ -488,16 +520,12 @@ class PhotorobotApp(QMainWindow):
         painter.end()
         self.image.setPixmap(result_pixmap)
 
-    def update_image(self):
-        scale = self.aligner_slider.value() / 100.0
-        self.var = scale
+    def update_image(self) -> None:
+        """Updates the displayed image based on the current variance value and feature directions"""
 
-        features = [
-            self.grouped_directions[group][direct] * self.grouped_directions_coeff[group][direct] 
-            for group in self.grouped_directions 
-            for direct in list(self.grouped_directions[group]) 
-            if self.grouped_directions_coeff[group][direct] != 0
-        ]
+        self.var = self.aligner_slider.value() / 100.0
+
+        features = self.__calc_features()
         z = (self.z + sum(features)) * self.var
         image = self.decode_latent_to_QImage(z)
 
@@ -506,7 +534,9 @@ class PhotorobotApp(QMainWindow):
         self.bin_mask.fill(Qt.GlobalColor.transparent)
         self.display_image()
 
-    def paint(self):
+    def toggle_paint_mode(self) -> None:
+        """Toggles the paint mode on or off"""
+
         self.paint_mode = not self.paint_mode
         self.brush_slider.setVisible(self.paint_mode)
         self.brush_label.setVisible(self.paint_mode)
@@ -514,7 +544,13 @@ class PhotorobotApp(QMainWindow):
             self.bin_mask.fill(Qt.GlobalColor.transparent)
             self.display_image()
 
-    def get_binary_mask(self):
+    def get_binary_mask(self) -> torch.Tensor:
+        """Converts the stored bin_mask image to a binary mask and resizes it to match base image dimensions
+
+        Returns:
+            (torch.Tensor): A binary mask as a PyTorch tensor
+        """
+
         mask_image = self.bin_mask.toImage()
         width = mask_image.width()
         height = mask_image.height()
@@ -524,29 +560,46 @@ class PhotorobotApp(QMainWindow):
         arr = np.frombuffer(ptr, np.uint8).reshape(height, width, 4)
         
         mask_array = (arr[:, :, 3] > 0).astype(np.uint8)
-        mask_resized = cv2.resize(mask_array, dsize=(144, 160), interpolation=cv2.INTER_NEAREST) # TODO: Get rid of fixed dsize
-        
+        mask_resized = cv2.resize(mask_array, dsize=(self.base_img_width, self.base_img_height), interpolation=cv2.INTER_NEAREST)
+
         return torch.from_numpy(mask_resized)
 
-    def start_optimization(self):
+    def start_search_direction(self) -> None:
+        """Initiates the optimization process in a separate thread and displays the progress bar"""
+
         self.progress_bar.setVisible(True)
-        thread = threading.Thread(target=self.optimization)
+        thread = threading.Thread(target=self.search_direction)
         thread.start()
 
-    def start_load_optimization(self):
+    def start_load_optimization(self) -> None:
+        """Initiates the process of loading and optimizing an image file"""
+
         file_name, _ = QFileDialog.getOpenFileName(
             self,
-            "Открыть файл",
+            "Open file",
             "",
-            "Все файлы (*.*)"
+            "Images (*.png *.jpg *.jpeg *.gif)"
         )
 
-        self.progress_bar.setVisible(True)
-        thread = threading.Thread(target=self.open_file_optim, args=[file_name])
-        thread.start()
+        if file_name:
+            self.progress_bar.setVisible(True)
+            thread = threading.Thread(target=self.open_file_optim, args=[file_name])
+            thread.start()
 
-    def optimization(self):
-        features = [self.grouped_directions[group][direct] * self.grouped_directions_coeff[group][direct] for group in self.grouped_directions for direct in list(self.grouped_directions[group]) if self.grouped_directions_coeff[group][direct] != 0]
+    def __calc_features(self) -> None:
+        """Calculate features by multiplying direction values with their coefficients"""
+
+        return [    
+            self.grouped_directions[group][direct] * self.grouped_directions_coeff[group][direct]
+            for group in self.grouped_directions
+            for direct in self.grouped_directions[group]
+            if self.grouped_directions_coeff[group][direct] != 0
+        ]
+
+    def search_direction(self) -> None:
+        """Performs optimization to find a search direction for image manipulation"""
+
+        features = self.__calc_features()
         init_z = self.z.clone().detach()
         z = init_z + torch.randn_like(init_z) * 0.05
         z.requires_grad_(True)
@@ -565,9 +618,10 @@ class PhotorobotApp(QMainWindow):
 
         for i in range(self.params.steps):
             opt_img = self.vae.decoder((z + sum(features)) * self.var)
-            with torch.no_grad():
-                print(-alpha * loss_fn(opt_img * mask, source_img * mask).item(), beta * loss_fn(opt_img * (1-mask), source_img * (1-mask)).item(), gamma * loss_fn(init_z, z).item(), delta * torch.sum(z ** 2).item(), torch.mean(z).item())
-            loss = -alpha * loss_fn(opt_img * mask, source_img * mask) + beta * loss_fn(opt_img * (1-mask), source_img * (1-mask)) + gamma * loss_fn(init_z, z) + delta * torch.sum(z ** 2)
+            loss = -alpha * loss_fn(opt_img * mask, source_img * mask) \
+                + beta * loss_fn(opt_img * (1-mask), source_img * (1-mask)) \
+                + gamma * loss_fn(init_z, z) \
+                + delta * torch.sum(z ** 2)
             optim.zero_grad()
             loss.backward()
             optim.step()
@@ -600,10 +654,9 @@ class PhotorobotApp(QMainWindow):
         slider_layout.addWidget(label)
 
         slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setMinimum(-200)
-        slider.setMaximum(200)
+        slider.setRange(-200, 200)
         slider.setValue(100)
-        slider.valueChanged.connect(lambda value, g='Custom', d=direction_name: self.update_direction(value, g, d))
+        slider.valueChanged.connect(lambda value, g='Custom', d=direction_name: self.update_direction_coeff(value, g, d))
         slider_layout.addWidget(slider)
         tab_layout.addLayout(slider_layout)
         self.right_sliders[f'Custom_{direction_name}'] = slider
