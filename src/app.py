@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSlider, QFileDialog, QProgressBar, QScrollArea
 )
 from PyQt6.QtGui import QPixmap, QImage, QPen, QPainter, QColor, QIcon
-from PyQt6.QtCore import Qt, QEvent, QPoint, pyqtSignal
+from PyQt6.QtCore import Qt, QEvent, QObject, QPoint, pyqtSignal
 from model import VAE
 from train import extract_features
 import utils
@@ -63,7 +63,7 @@ class OptimizationParams(QWidget):
             value (float | int): The initial value to set in the QLineEdit field
 
         Returns:
-            tuple[QHBoxLayout, QLineEdit]: A tuple containing the created layout and the QLineEdit field
+            (tuple[QHBoxLayout, QLineEdit]): A tuple containing the created layout and the QLineEdit field
         """
 
         layout = QHBoxLayout()
@@ -71,6 +71,7 @@ class OptimizationParams(QWidget):
         field = QLineEdit()
         field.setText(str(value))
         layout.addWidget(field)
+
         return layout, field
 
     def init_ui(self) -> None:
@@ -123,7 +124,7 @@ class OptimizationParams(QWidget):
             max_val (float): Maximum allowed value (inclusive), optional
         
         Returns:
-            The converted value (int or float)
+            (int|float): The converted value
             
         Raises:
             ValueError: If the field is empty, not convertible, or out of range
@@ -192,11 +193,11 @@ class SaveDialog(QDialog):
 
 
 class PhotorobotApp(QMainWindow):
-    """A main app window"""
+    """A main application window for the Photorobot VAE"""
     
-    optimization_update = pyqtSignal()
-    progress_updated = pyqtSignal(int) 
-    add_slider_signal = pyqtSignal(torch.Tensor)
+    image_optimization_step = pyqtSignal()
+    progress_bar_step = pyqtSignal(int) 
+    add_slider = pyqtSignal(torch.Tensor)
 
     def __init__(
         self, 
@@ -205,6 +206,17 @@ class PhotorobotApp(QMainWindow):
         device: torch.device, 
         config: OmegaConf
     ) -> None:
+        """Initializes the PhotorobotApp main window.
+        
+        Sets up the main application window, initializes signals, UI components, and default parameters for image editing
+
+        Args:
+            vae (VAE): The variational autoencoder model used for image generation
+            grouped_directions (dict[dict[str, torch.Tensor]]): A dictionary of grouped latent directions for image manipulation
+            device (torch.device): The PyTorch device for tensor operations
+            config (OmegaConf): Configuration object
+        """ 
+
         super().__init__()
 
         self.vae = vae
@@ -215,131 +227,119 @@ class PhotorobotApp(QMainWindow):
 
         self.grouped_directions = grouped_directions | {'Custom': {}}
         self.grouped_directions_coeff = {g: dict.fromkeys(d, 0) for g, d in grouped_directions.items()} | {'Custom': {}}
-        self.var = 1
+        self.var = 1 # latent vector variance
 
         self.z = torch.zeros(config['latent_dim'])
 
         self.paint_mode = False
-        self.drawing = False
+        self.is_drawing = False
         self.last_point = QPoint()
-        self.mask = None
+        self.bin_mask = None
         self.brush_size = 15
 
-        self.optimization_update.connect(self.update_image)
-        self.progress_updated.connect(self.update_progress)
-        self.add_slider_signal.connect(self.add_custom_slider)
+        self.image_optimization_step.connect(self.update_image)
+        self.progress_bar_step.connect(self.update_progress_bar)
+        self.add_slider.connect(self.add_custom_slider)
 
         self.params = OptimizationParams()
 
         self.init_ui()
 
-    def update_progress(self, value):
+    def update_progress_bar(self, value: int) -> None:
+        """Updates progress bar value
+        
+        Args:
+            value (int): Progress bar value in percentage
+        """
+
         self.progress_bar.setValue(value)
 
     def init_ui(self) -> None:
+        """Initializes the user interface for the Photorobot VAE application"""
+
         menu_bar = self.menuBar()
         
-        file_menu = menu_bar.addMenu("File")
-        open_action = file_menu.addAction("Open")
-        save_action = file_menu.addAction("Save")
-        file_menu.addSeparator()
-        enc_load_action = file_menu.addAction("Load using encoder")
-        enc_load_action.triggered.connect(self.open_file)
-        enc_load_action = file_menu.addAction("Load using optimization")
-        enc_load_action.triggered.connect(self.start_load_optimization)
-        file_menu.addSeparator()
-        export_action = file_menu.addAction("Export sketch")
-        export_action.triggered.connect(self.export_sketch)
-        exit_action = file_menu.addAction("Exit")
-        exit_action.triggered.connect(lambda: os._exit(0))
-        
-        reset_menu = menu_bar.addMenu("Reset")
-        reset_action = reset_menu.addAction("Reset Sliders")
-        reset_action.triggered.connect(self.reset_sliders)
-        reset_z = reset_menu.addAction("Reset Z")
-        reset_z.triggered.connect(self.zero_z)
+        menu_structure = {
+            "File": [
+                ("Open", None),
+                ("Save", None),
+                None,  # Separator
+                ("Load using encoder", self.open_file),
+                ("Load using optimization", self.start_load_optimization),
+                None,  # Separator
+                ("Import directions", None),
+                ("Export directions", None),
+                None,  # Separator
+                ("Export sketch", self.export_sketch),
+                ("Exit", lambda: os._exit(0))
+            ],
+            "Reset": [
+                ("Reset Sliders", self.reset_sliders),
+                ("Reset Z", self.zero_z)
+            ],
+            "Search": [
+                ("Select", self.paint),
+                ("Params", self.set_optimization_params),
+                None,  # Separator
+                ("Optimize", self.start_optimization)
+            ]
+        }
 
-        search_menu = menu_bar.addMenu("Search")
-        paint_action = search_menu.addAction("Select")
-        paint_action.triggered.connect(self.paint)
-        optim_action = search_menu.addAction("Params")
-        optim_action.triggered.connect(self.set_optimization_params)
-        search_menu.addSeparator()
-        optim_action = search_menu.addAction("Optimize")
-        optim_action.triggered.connect(self.start_optimization)
+        for menu_name, actions in menu_structure.items():
+            menu = menu_bar.addMenu(menu_name)
+            for action_info in actions:
+                if action_info is None:
+                    menu.addSeparator()
+                else:
+                    name, callback = action_info
+                    action = menu.addAction(name)
+                    if callback:
+                        action.triggered.connect(callback)
 
         central_widget = QWidget()
-        self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
         right_layout = QVBoxLayout()
         left_layout = QVBoxLayout()
-        right_layout2 = QVBoxLayout()
+        
+        self.setCentralWidget(central_widget)
 
-        with torch.no_grad():
-            test = utils.denormalize(self.vae.decoder(self.z * self.var).squeeze(0, 1))
-        test = cv2.resize(test, dsize=(self.img_width, self.img_height), interpolation=cv2.INTER_LANCZOS4)
-        image = QImage(test.data, self.img_width, self.img_height, self.img_width, QImage.Format.Format_Grayscale8)
+        image = self.decode_latent_to_QImage(self.z * self.var)
 
-        # Aligner
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setMinimum(0)
-        self.slider.setMaximum(120)
-        self.slider.setValue(100)
-        self.slider.valueChanged.connect(self.update_image)
-        left_layout.addWidget(self.slider)
+        aligner_layout = QHBoxLayout()
+        aligner_label = QLabel("Align:")
+        self.aligner_slider = QSlider(Qt.Orientation.Horizontal)
+        self.aligner_slider.setRange(0, 120)
+        self.aligner_slider.setValue(100)
+        self.aligner_slider.valueChanged.connect(self.update_image)
+        aligner_layout.addWidget(aligner_label)
+        aligner_layout.addWidget(self.aligner_slider)
+        left_layout.addLayout(aligner_layout)
 
         self.right_sliders = {}
-        self.tabs = QTabWidget(self)
-
-        for group in self.grouped_directions:
-            tab = QWidget()
-            tab_layout = QVBoxLayout()
-            for direction in self.grouped_directions[group]:
-                slider_layout = QVBoxLayout()
-                label = QLabel(direction)
-                slider_layout.addWidget(label)
-
-                slider = QSlider(Qt.Orientation.Horizontal)
-                slider.setMinimum(-200)
-                slider.setMaximum(200)
-                slider.setValue(0)
-                slider.valueChanged.connect(lambda value, g=group, d=direction: self.update_direction(value, g, d))
-                slider_layout.addWidget(slider)
-                self.right_sliders[f'{group}_{direction}'] = slider
-                tab_layout.addLayout(slider_layout)
-            # tab_layout.addStretch()
-            tab_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            tab.setLayout(tab_layout)
-
-            scroll = QScrollArea()
-            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-            scroll.setWidgetResizable(True)
-            scroll.setWidget(tab)
-            
-            self.tabs.addTab(scroll, self.invert_icon(f"assets/icons/{group.lower()}.png"), group)
+        self.tabs = self.__init_tabs()
 
         right_layout.addWidget(self.tabs)
 
-        self.label = QLabel(self)
+        self.image = QLabel(self)
         self.pixmap = QPixmap(image)
         self.original_size = self.pixmap.size()
-        self.mask = QPixmap(self.pixmap.size()) 
-        self.mask.fill(Qt.GlobalColor.transparent)         
-        self.label.setPixmap(self.pixmap)
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        left_layout.addWidget(self.label)
+        self.bin_mask = QPixmap(self.pixmap.size()) 
+        self.bin_mask.fill(Qt.GlobalColor.transparent)         
+        self.image.setPixmap(self.pixmap)
+        self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        left_layout.addWidget(self.image)
 
         brush_layout = QHBoxLayout()
         self.brush_label = QLabel("Brush Size:")
-        brush_layout.addWidget(self.brush_label)
         self.brush_slider = QSlider(Qt.Orientation.Horizontal)
-        self.brush_slider.setMinimum(1)
-        self.brush_slider.setMaximum(50)
+
+        for widget in (self.brush_label, self.brush_slider):
+            widget.setVisible(False)
+            brush_layout.addWidget(widget)
+
+        self.brush_slider.setRange(1, 50)
         self.brush_slider.setValue(self.brush_size)
-        self.brush_slider.setVisible(False)
-        self.brush_label.setVisible(False)
         self.brush_slider.valueChanged.connect(self.update_brush_size)
-        brush_layout.addWidget(self.brush_slider)
         left_layout.addLayout(brush_layout)
 
         self.progress_bar = QProgressBar()  
@@ -353,14 +353,65 @@ class PhotorobotApp(QMainWindow):
 
         main_layout.addLayout(left_layout)
         main_layout.addLayout(right_layout)
-        main_layout.addLayout(right_layout2)
+
+        self.image.setMouseTracking(True)
+        self.image.installEventFilter(self)
 
         self.setWindowTitle("Photorobot VAE")
         self.showMaximized() 
 
-        self.label.setMouseTracking(True)
-        self.label.installEventFilter(self)
+    def __init_tabs(self) -> QTabWidget:
+        """Initializes a QTabWidget containing a tab with sliders for each group of directions
 
+        Returns:
+            QTabWidget: The fully constructed tab widget with sliders grouped by category
+        """
+
+        self.tabs = QTabWidget(self)
+
+        for group in self.grouped_directions:
+            tab = QWidget()
+            tab_layout = QVBoxLayout()
+            for direction in self.grouped_directions[group]:
+                slider_layout = QVBoxLayout()
+                label = QLabel(direction)
+                slider_layout.addWidget(label)
+                slider = QSlider(Qt.Orientation.Horizontal)
+                slider.setRange(-200, 200)
+                slider.setValue(0)
+                slider.valueChanged.connect(lambda value, g=group, d=direction: self.update_direction(value, g, d))
+                slider_layout.addWidget(slider)
+                self.right_sliders[f'{group}_{direction}'] = slider
+                tab_layout.addLayout(slider_layout)
+            tab_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tab.setLayout(tab_layout)
+
+            scroll = QScrollArea()
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(tab)
+            
+            self.tabs.addTab(scroll, self.invert_icon(f"assets/icons/{group.lower()}.png"), group)
+
+        return self.tabs
+
+    @torch.inference_mode
+    def decode_latent_to_QImage(self, latent: torch.Tensor) -> QImage:
+        """Decodes a latent tensor into a grayscale QImage using a Variational Autoencoder
+
+        Args:
+            latent (torch.Tensor): Input latent tensor
+
+        Returns:
+            (QImage): QImage of size (self.img_width, self.img_height) in Format_Grayscale8.
+        """
+
+        denorm_img = utils.denormalize(self.vae.decoder(latent).squeeze(0, 1))
+        resized_img = cv2.resize(denorm_img, dsize=(self.img_width, self.img_height), interpolation=cv2.INTER_LANCZOS4)
+        qimg = QImage(resized_img.data, self.img_width, self.img_height, self.img_width, QImage.Format.Format_Grayscale8)
+
+        return qimg
+    
     def update_direction(self, value: int, group: str, direction: str) -> None:
         self.grouped_directions_coeff[group][direction] = value / 100.0
         self.update_image()
@@ -368,27 +419,38 @@ class PhotorobotApp(QMainWindow):
     def update_brush_size(self, value):
         self.brush_size = value
 
-    def eventFilter(self, source, event):
-        if source == self.label and self.paint_mode:
+    def eventFilter(self, source: QObject, event: QEvent) -> bool:
+        """Handles mouse events for drawing on a label in paint mode
+
+        Args:
+            source (QObject): The object that generated the event
+            event (QEvent): The event to be processed
+
+        Returns:
+            (bool): True if the event was handled, False otherwise
+        """
+
+        if source == self.image and self.paint_mode:
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-                self.drawing = True
+                self.is_drawing = True
                 pos = self.map_to_pixmap(event.pos())
                 self.last_point = pos
                 self.draw_on_mask(pos)
                 return True
-            elif event.type() == QEvent.Type.MouseMove and self.drawing:
+            elif event.type() == QEvent.Type.MouseMove and self.is_drawing:
                 pos = self.map_to_pixmap(event.pos())
                 self.draw_on_mask(pos)
                 self.last_point = pos
                 return True
             elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
-                self.drawing = False
+                self.is_drawing = False
                 return True
+    
         return super().eventFilter(source, event)
 
     def map_to_pixmap(self, pos):
         pixmap_rect = self.pixmap.rect()
-        label_rect = self.label.rect()
+        label_rect = self.image.rect()
         
         # Сonsidering (AlignmentFlag.AlignCenter)
         pixmap_x = (label_rect.width() - pixmap_rect.width()) // 2
@@ -404,54 +466,56 @@ class PhotorobotApp(QMainWindow):
         return QPoint(mapped_x, mapped_y)
 
     def draw_on_mask(self, position):
-        painter = QPainter(self.mask)
+        painter = QPainter(self.bin_mask)
         pen = QPen(QColor(255, 255, 255, 255), self.brush_size, Qt.PenStyle.SolidLine, 
                 Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         
-        if self.drawing and not self.last_point.isNull():
+        if self.is_drawing and not self.last_point.isNull():
             painter.drawLine(self.last_point, position)
         else:
             painter.drawPoint(position)
             
         painter.end()
-        self.update_display()
+        self.display_image()
 
-    def update_display(self):
+    def display_image(self):
         # Combine mask and image
         result_pixmap = QPixmap(self.pixmap)
         painter = QPainter(result_pixmap)
-        painter.drawPixmap(0, 0, self.mask)
+        painter.setOpacity(0.6)
+        painter.drawPixmap(0, 0, self.bin_mask)
         painter.end()
-        self.label.setPixmap(result_pixmap)
+        self.image.setPixmap(result_pixmap)
 
     def update_image(self):
-        scale = self.slider.value() / 100.0
+        scale = self.aligner_slider.value() / 100.0
         self.var = scale
 
-        with torch.no_grad():
-            features = [self.grouped_directions[group][direct] * self.grouped_directions_coeff[group][direct] for group in self.grouped_directions for direct in list(self.grouped_directions[group]) if self.grouped_directions_coeff[group][direct] != 0]
-            z = (self.z + sum(features)) * self.var
-            test = utils.denormalize(self.vae.decoder(z).squeeze(0, 1))
-        test = cv2.resize(test, dsize=(self.img_width, self.img_height), interpolation=cv2.INTER_LANCZOS4)
-        image = QImage(test.data, self.img_width, self.img_height, self.img_width, QImage.Format.Format_Grayscale8)
+        features = [
+            self.grouped_directions[group][direct] * self.grouped_directions_coeff[group][direct] 
+            for group in self.grouped_directions 
+            for direct in list(self.grouped_directions[group]) 
+            if self.grouped_directions_coeff[group][direct] != 0
+        ]
+        z = (self.z + sum(features)) * self.var
+        image = self.decode_latent_to_QImage(z)
 
         self.pixmap = QPixmap(image)
-        # Update mask with new size
-        self.mask = QPixmap(self.pixmap.size())
-        self.mask.fill(Qt.GlobalColor.transparent)
-        self.update_display()
+        self.bin_mask = QPixmap(self.pixmap.size())
+        self.bin_mask.fill(Qt.GlobalColor.transparent)
+        self.display_image()
 
     def paint(self):
         self.paint_mode = not self.paint_mode
         self.brush_slider.setVisible(self.paint_mode)
         self.brush_label.setVisible(self.paint_mode)
         if not self.paint_mode:
-            self.mask.fill(Qt.GlobalColor.transparent)
-            self.update_display()
+            self.bin_mask.fill(Qt.GlobalColor.transparent)
+            self.display_image()
 
     def get_binary_mask(self):
-        mask_image = self.mask.toImage()
+        mask_image = self.bin_mask.toImage()
         width = mask_image.width()
         height = mask_image.height()
         
@@ -508,12 +572,12 @@ class PhotorobotApp(QMainWindow):
             loss.backward()
             optim.step()
             self.z = z.clone().detach()
-            self.progress_updated.emit(int(i / self.params.steps * 100))
-            self.optimization_update.emit()
+            self.progress_bar_step.emit(int(i / self.params.steps * 100))
+            self.image_optimization_step.emit()
         
         self.z = init_z
 
-        self.add_slider_signal.emit(z.clone().detach() - init_z)
+        self.add_slider.emit(z.clone().detach() - init_z)
 
         self.progress_bar.setVisible(False)
 
@@ -563,11 +627,11 @@ class PhotorobotApp(QMainWindow):
 
     def open_file_optim(self, file_name):
         img = transforms(image=np.array(Image.open(file_name).convert('RGB').resize((160, 160), Image.Resampling.LANCZOS)))['image']
-        img = img.unsqueeze(0).requires_grad_(True)  # Убедитесь, что img отслеживает градиенты
+        img = img.unsqueeze(0).requires_grad_(True) 
         
         z_opt = self.vae.encoder(img)[0].clone().detach()
         z_opt.requires_grad_(True)
-        optim = torch.optim.AdamW([z_opt], lr=0.02)  # Увеличил lr
+        optim = torch.optim.AdamW([z_opt], lr=0.02) 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optim)
         loss_fn = torch.nn.MSELoss()
 
@@ -589,8 +653,8 @@ class PhotorobotApp(QMainWindow):
 
             self.z = z_opt.clone().detach()
 
-            self.progress_updated.emit(int(i))
-            self.optimization_update.emit()
+            self.image_optimization_step.emit()
+            self.progress_bar_step.emit(int(i))
         
         self.progress_bar.setVisible(False)
 
@@ -602,7 +666,7 @@ class PhotorobotApp(QMainWindow):
             "Все файлы (*.*)"
         )
 
-        self.label.pixmap().save(file_name)
+        self.image.pixmap().save(file_name)
 
     def sample(self):
         self.z = torch.randn(self.latent_dim)
@@ -614,7 +678,7 @@ class PhotorobotApp(QMainWindow):
             for direction in list(self.grouped_directions[group]):
                 self.right_sliders[f'{group}_{direction}'].setValue(0)         
                 self.grouped_directions_coeff[group][direction] = 0      
-        self.slider.setValue(100)
+        self.aligner_slider.setValue(100)
         self.update_image()
 
     def zero_z(self):
