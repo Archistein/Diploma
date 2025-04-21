@@ -4,25 +4,43 @@ from math import ceil, prod
 
 
 class ConvBlock(nn.Module):
-    """
-    Convolutional block for VAE
-    """
-    def __init__(self, 
-                 in_channels: int,
-                 out_channels: int,
-                 kernel_size: int | tuple[int],
-                 stride: int | tuple[int],
-                 padding: int | tuple[int]
-                ) -> None:
+    """Convolutional block with convolution, group normalization, and ELU activation"""
+
+    def __init__(
+        self, 
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int | tuple[int],
+        stride: int | tuple[int],
+        padding: int | tuple[int]
+    ) -> None:
+        """Initializes the ConvBlock
+
+        Args:
+            in_channels (int): Number of input channels
+            out_channels (int): Number of output channels
+            kernel_size (int | tuple[int]): Size of the convolutional kernel
+            stride (int | tuple[int]): Stride of the convolution
+            padding (int | tuple[int]): Padding added to both sides of the input
+        """
+
         super().__init__()
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
-        # self.bn = nn.BatchNorm2d(out_channels)
         num_groups = min(32, max(1, out_channels // 4)) 
         self.gn = nn.GroupNorm(num_groups=num_groups, num_channels=out_channels)
         self.elu = nn.ELU()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the ConvBlock
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, in_channels, height, width).
+
+        Returns:
+            (torch.Tensor): Output tensor after convolution, normalization, and activation.
+        """
+
         out = self.conv(x)
         out = self.gn(out)
         out = self.elu(out)
@@ -30,19 +48,34 @@ class ConvBlock(nn.Module):
         return out
     
 
-class ConvTpBlock(nn.Module):
-    def __init__(self, 
-                 in_channels: int,
-                 out_channels: int,
-                 kernel_size: tuple[int],
-                 stride: int | tuple[int],
-                 padding: int | tuple[int],
-                 output_padding: int | tuple[int],
-                 first: bool = False
-                ) -> None:
+class DeconvBlock(nn.Module):
+    """Deconvolutional block with optional transpose convolution or upsampling + convolution"""
+
+    def __init__(
+        self, 
+        in_channels: int,
+        out_channels: int,
+        kernel_size: tuple[int],
+        stride: int | tuple[int],
+        padding: int | tuple[int],
+        output_padding: int | tuple[int],
+        transpose: bool = False
+    ) -> None:
+        """Initializes the DeconvBlocks
+
+        Args:
+            in_channels (int): Number of input channels
+            out_channels (int): Number of output channels
+            kernel_size (tuple[int]): Size of the convolutional kernel
+            stride (int | tuple[int]): Stride of the convolution or upsampling
+            padding (int | tuple[int]): Padding added to both sides of the input
+            output_padding (int | tuple[int]): Additional size added to one side of the output
+            transpose (bool): If True, use ConvTranspose2d; else use Upsample + Conv2d. Defaults to False.
+        """
+
         super().__init__()
 
-        if first:
+        if transpose:
             self.convt =  nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding, output_padding, bias=False)
         else:
             self.convt = nn.Sequential(
@@ -54,6 +87,15 @@ class ConvTpBlock(nn.Module):
         self.elu = nn.ELU()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the DeconvBlock
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, in_channels, height, width)
+
+        Returns:
+            (torch.Tensor): Output tensor after deconvolution, normalization, and activation
+        """
+
         out = self.convt(x)
         out = self.gn(out)
         out = self.elu(out)
@@ -62,12 +104,24 @@ class ConvTpBlock(nn.Module):
     
 
 class Encoder(nn.Module):
-    def __init__(self, 
-                 img_size: tuple[int],
-                 in_channels: int,
-                 latent_dim: int,
-                 hidden_layers: tuple[int]
-                ) -> None:
+    """Encoder for a Variational Autoencoder"""
+
+    def __init__(
+        self, 
+        img_size: tuple[int],
+        in_channels: int,
+        latent_dim: int,
+        hidden_layers: tuple[int]
+    ) -> None:
+        """Initializes the Encoder
+
+        Args:
+            img_size (tuple[int]): Size of input images (height, width)
+            in_channels (int): Number of input channels
+            latent_dim (int): Dimension of the latent space
+            hidden_layers (tuple[int]): Number of channels in each hidden layer
+        """
+
         super().__init__()
 
         self.encoder = nn.ModuleList()
@@ -86,7 +140,16 @@ class Encoder(nn.Module):
         self.fc_mu = nn.Linear(enc_dim, latent_dim)
         self.fc_logvar = nn.Linear(enc_dim, latent_dim)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass of the Encoder
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, in_channels, height, width)
+
+        Returns:
+            (tuple[torch.Tensor, torch.Tensor]): Mean (mu) and log-variance (logvar) of the latent distribution
+        """
+
         for block in self.encoder:
             out = block['conv1'](x)
             x = block['conv2'](out + x)
@@ -100,13 +163,26 @@ class Encoder(nn.Module):
     
 
 class Decoder(nn.Module):
-    def __init__(self,
-                 out_channels: int,
-                 latent_dim: int,
-                 origin_shape: tuple[int],
-                 hidden_layers: tuple[int],
-                 out_pad: tuple[int] = (1, 1)
-                ) -> None:
+    """Decoder for a Variational Autoencoder"""
+
+    def __init__(
+        self,
+        out_channels: int,
+        latent_dim: int,
+        origin_shape: tuple[int],
+        hidden_layers: tuple[int],
+        out_pad: tuple[int] = (1, 1)
+    ) -> None:
+        """Initializes the Decoder
+
+        Args:
+            out_channels (int): Number of output channels (same as input image channels)
+            latent_dim (int): Dimension of the latent space
+            origin_shape (tuple[int]): Shape of the encoder's final feature map
+            hidden_layers (tuple[int]): Number of channels in each hidden layer
+            out_pad (tuple[int]): Output padding for the first deconvolution. Defaults to (1, 1)
+        """
+
         super().__init__()
 
         self.fc = nn.Linear(latent_dim, prod(origin_shape))
@@ -118,12 +194,28 @@ class Decoder(nn.Module):
         for i, (curr, next) in enumerate(zip(hidden_layers, hidden_layers[1:] + (hidden_layers[-1],))):
             self.decoder.append(nn.ModuleDict({
                 'conv': ConvBlock(curr, curr, kernel_size=3, stride=1, padding=1),
-                'convt': ConvTpBlock(curr, next, kernel_size=3, stride=(2 if not i else 1), padding=1, output_padding=(out_pad if not i else 1), first=(not i))
+                'convt': DeconvBlock(curr, 
+                                     next, 
+                                     kernel_size=3, 
+                                     stride=(2 if not i else 1), 
+                                     output_padding=(out_pad if not i else 1), 
+                                     padding=1, 
+                                     transpose=(not i)
+                                    )
             }))
         
         self.head = nn.Conv2d(hidden_layers[-1], out_channels, kernel_size=3, padding=1)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the Decoder
+
+        Args:
+            z (torch.Tensor): Latent vector of shape (batch_size, latent_dim)
+
+        Returns:
+            torch.Tensor: Reconstructed image tensor of shape (batch_size, out_channels, height, width)
+        """
+
         z = self.fc(z)
         z = self.reshape(z)
 
@@ -135,12 +227,24 @@ class Decoder(nn.Module):
     
 
 class VAE(nn.Module):
-    def __init__(self, 
-                 img_size: tuple[int],
-                 in_channels: int,
-                 latent_dim: int = 512,
-                 hidden_layers: tuple[int] = (32, 64, 128, 256, 512)
-                ) -> None:
+    """Variational Autoencoder"""
+
+    def __init__(
+        self, 
+        img_size: tuple[int],
+        in_channels: int,
+        latent_dim: int = 512,
+        hidden_layers: tuple[int] = (32, 64, 128, 256, 512)
+    ) -> None:
+        """Initializes the VAE
+
+        Args:
+            img_size (tuple[int]): Size of input images (height, width)
+            in_channels (int): Number of input channels
+            latent_dim (int): Dimension of the latent space. Defaults to 512
+            hidden_layers (tuple[int]): Number of channels in each hidden layer. Defaults to (32, 64, 128, 256, 512)
+        """
+
         super().__init__()
         
         out_pad = (int(img_size[0] % len(hidden_layers) == 0), int(img_size[1] % len(hidden_layers) == 0))
@@ -150,18 +254,48 @@ class VAE(nn.Module):
         self.decoder = Decoder(in_channels, latent_dim, self.encoder.origin_shape, hidden_layers[::-1], out_pad)
     
     def forward(self, x: torch.Tensor, stochastic: bool = True) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Forward pass of the VAE
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, in_channels, height, width)
+            stochastic (bool): If True, sample from latent distribution; else use mean. Defaults to True
+
+        Returns:
+            (tuple[torch.Tensor, torch.Tensor, torch.Tensor]): Reconstructed image, mean (mu), and log-variance (logvar).
+        """
+
         mu, logvar = self.encoder(x)
         z = self.reparameterize(mu, logvar) if stochastic else mu
         
         return self.decoder(z), mu, logvar
     
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        """Reparameterization trick to sample from latent distribution
+
+        Args:
+            mu (torch.Tensor): Mean of the latent distribution
+            logvar (torch.Tensor): Log-variance of the latent distribution
+
+        Returns:
+            torch.Tensor: Sampled latent vector
+        """
+
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
 
         return eps * std + mu
 
     def sample(self, num: int, device: torch.device) -> torch.Tensor:
+        """Generate samples from random latent vectors
+
+        Args:
+            num (int): Number of samples to generate
+            device (torch.device): Device to perform computation on
+
+        Returns:
+            torch.Tensor: Generated samples of shape (num, in_channels, height, width)
+        """
+
         z = torch.randn(num, self.latent_dim, device=device)
 
         return self.decoder(z)
