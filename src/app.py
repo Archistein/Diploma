@@ -266,7 +266,7 @@ class PhotorobotApp(QMainWindow):
                 ("Open", None),
                 ("Save", None),
                 None,  # Separator
-                ("Load using encoder", self.open_file),
+                ("Load using encoder", self.load_encoder),
                 ("Load using optimization", self.start_load_optimization),
                 None,  # Separator
                 ("Import directions", None),
@@ -276,8 +276,8 @@ class PhotorobotApp(QMainWindow):
                 ("Exit", lambda: os._exit(0))
             ],
             "Reset": [
-                ("Reset Sliders", self.reset_sliders),
-                ("Reset Z", self.zero_z)
+                ("Reset sliders", self.reset_sliders),
+                ("Reset latent", self.reset_latent)
             ],
             "Search": [
                 ("Select", self.toggle_paint_mode),
@@ -583,7 +583,7 @@ class PhotorobotApp(QMainWindow):
 
         if file_name:
             self.progress_bar.setVisible(True)
-            thread = threading.Thread(target=self.open_file_optim, args=[file_name])
+            thread = threading.Thread(target=self.load_optimization, args=[file_name])
             thread.start()
 
     def __calc_features(self) -> None:
@@ -635,18 +635,24 @@ class PhotorobotApp(QMainWindow):
 
         self.progress_bar.setVisible(False)
 
-    def add_custom_slider(self, direction):
-        dlg = SaveDialog()
-        if dlg.exec():
-            direction_name = dlg.name.text()
-        else:
+    def add_custom_slider(self, direction: torch.Tensor) -> None:
+        """Adds a custom slider to the UI for a given direction tensor
+
+        Args:
+            direction (torch.Tensor): The direction tensor
+        """
+
+        save_dlg = SaveDialog()
+
+        if not save_dlg.exec():
             return
+        
+        direction_name = save_dlg.name.text()
 
         self.grouped_directions['Custom'][direction_name] = direction
         self.grouped_directions_coeff['Custom'][direction_name] = 1
 
         tab = self.tabs.widget(7).widget()
-
         tab_layout = tab.layout()
     
         slider_layout = QVBoxLayout()
@@ -663,25 +669,38 @@ class PhotorobotApp(QMainWindow):
 
         self.update_image()
 
-    def set_optimization_params(self):
+    def set_optimization_params(self) -> None:
+        """Shows optimization params window"""
+
         self.params.show()
 
-    def open_file(self):
+    def load_encoder(self) -> None:
+        """Opens a file dialog to select an image file, processes the image, and encodes it into VAE latent space"""
+
         file_name, _ = QFileDialog.getOpenFileName(
             self,
-            "Открыть файл",
+            "Open file",
             "",
-            "Все файлы (*.*)"
+            "Images (*.png *.jpg *.jpeg *.gif)"
         )
         
+        # TODO: crop and resize in separate window
+
         img = transforms(image=np.array(Image.open(file_name).convert('RGB').resize((160, 160), Image.Resampling.LANCZOS)))['image'] # TODO: fix transforms global var
         self.z = self.vae.encoder(img.unsqueeze(0))[0]
         self.update_image()
 
-    def open_file_optim(self, file_name):
+    def load_optimization(self, file_name: str) -> None:
+        """Loads and optimizes an image using a VGG-based perceptual loss
+
+        Args:
+            file_name (str): Path to the input image file
+        """
+
         img = transforms(image=np.array(Image.open(file_name).convert('RGB').resize((160, 160), Image.Resampling.LANCZOS)))['image']
         img = img.unsqueeze(0).requires_grad_(True) 
         
+        # TODO: take out opt params to OptParams
         z_opt = self.vae.encoder(img)[0].clone().detach()
         z_opt.requires_grad_(True)
         optim = torch.optim.AdamW([z_opt], lr=0.02) 
@@ -711,22 +730,27 @@ class PhotorobotApp(QMainWindow):
         
         self.progress_bar.setVisible(False)
 
-    def export_sketch(self):
+    def export_sketch(self) -> None:
+        """Saves sketch as jpg file"""
+
         file_name, _ = QFileDialog.getSaveFileName(
             self,
-            "Cохранить файл",
+            "Save file",
             "",
-            "Все файлы (*.*)"
+            "Images (*.jpg)"
         )
 
         self.image.pixmap().save(file_name)
 
-    def sample(self):
+    def sample(self) -> None:
+        """Samples random latent Z from normal Gaussian distribution"""
+
         self.z = torch.randn(self.latent_dim)
-        self.get_binary_mask()
         self.update_image()
 
-    def reset_sliders(self):
+    def reset_sliders(self) -> None:
+        """Resets all sliders and direction coefficients to their default values and updates the image"""
+
         for group in list(self.grouped_directions):
             for direction in list(self.grouped_directions[group]):
                 self.right_sliders[f'{group}_{direction}'].setValue(0)         
@@ -734,11 +758,22 @@ class PhotorobotApp(QMainWindow):
         self.aligner_slider.setValue(100)
         self.update_image()
 
-    def zero_z(self):
+    def reset_latent(self) -> None:
+        """Resets the latent vector to a zero tensor"""
+
         self.z = torch.zeros(self.latent_dim)
         self.update_image()
 
-    def invert_icon(self, icon_path: str):
+    def invert_icon(self, icon_path: str) -> QIcon:
+        """Inverts the colors of an icon while preserving its alpha channel
+
+        Args:
+            icon_path (str): Path to the icon image fil
+
+        Returns:
+            QIcon: A Qt icon object with inverted colors
+        """
+
         img = Image.open(icon_path).convert("RGBA") 
 
         r, g, b, a = img.split()
