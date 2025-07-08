@@ -45,7 +45,7 @@ Encode a reference image to guide composite generation:
 
 The optimization process uses a loss function defined as:
 
-$ \mathcal{L} = -\alpha \cdot L_1(x_{\text{opt}} \cdot M, x_{\text{init}} \cdot M) + \beta \cdot L_1(x_{\text{opt}} \cdot (1-M), x_{\text{init}} \cdot (1-M)) + \gamma \cdot L_1(z_{\text{opt}}, z_{\text{init}}) + \delta \cdot |z_{\text{opt}}|^2 $
+$\mathcal{L} = -\alpha \cdot L_1(x_{\text{opt}} \cdot M, x_{\text{init}} \cdot M) + \beta \cdot L_1(x_{\text{opt}} \cdot (1-M), x_{\text{init}} \cdot (1-M)) + \gamma \cdot L_1(z_{\text{opt}}, z_{\text{init}}) + \delta \cdot |z_{\text{opt}}|^2$
 
 - α (Alpha): Weight for masked region L1 loss (default: 1e-1);
 - β (Beta): Weight for unmasked region L1 loss (default: 1);
