@@ -1753,6 +1753,21 @@ files = [
 six = ">=1.5"
 
 [[package]]
+name = "pytorch-msssim"
+version = "1.0.0"
+description = "Fast and differentiable MS-SSIM and SSIM for pytorch."
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "pytorch_msssim-1.0.0-py3-none-any.whl", hash = "sha256:0b4b7bbf7035fe9dc8084244237aac13b1f104852c45b63a7e9fab4363bede54"},
+    {file = "pytorch_msssim-1.0.0.tar.gz", hash = "sha256:53273f03ce5c435f706f49feb5110a8afe90b2519484b0fe0df9639670106d0b"},
+]
+
+[package.dependencies]
+torch = "*"
+
+[[package]]
 name = "pytz"
 version = "2025.2"
 description = "World timezone definitions, modern and historical"
@@ -2669,4 +2684,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13"
-content-hash = "5dc1698a4150abf3d4d99275fe561443c6ac2c494b53c0f74a61adb37dce1d1e"
+content-hash = "686ca657dd4a280b2e097b445abee78c13c9a20bfba152ae8d4ee279c5e2c088"
