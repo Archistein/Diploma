@@ -6,5 +6,15 @@ calc_mean: 0.4377
 calc_std: 0.2722
 latent_dim: 512
 batch_size: 128
+epoch: 50
+lr: 3e-4
+grad_clip: 1
+scheduler_gamma: 0.96
+recostruction_coeff: 1
+ssim_coeff: 1
+vgg_coeff: 0.25
+max_beta: 1e-3
+min_beta: 9e-4
+delt_beta: 5e-5
 params_path: ../params/weights/weights.pt
 directions_path: ../params/directions/grouped_directions.pkl
