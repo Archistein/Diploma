@@ -1,7 +1,7 @@
 [project]
 name = "photorobot-vae"
 version = "0.1.0"
-description = "Application for automated facial composite generation"
+description = "AI-Powered facial composite generation tool"
 authors = [
     {name = "Archistein",email = "turods@yandex.ru"}
 ]
@@ -17,7 +17,8 @@ dependencies = [
     "pyqt6 (==6.9.0)",
     "pyqt6-sip (==13.10.0)",
     "torch (==2.6.0)",
-    "torchvision (==0.21.0)"
+    "torchvision (==0.21.0)",
+    "pytorch-msssim (>=1.0.0,<2.0.0)"
 ]
 
 [build-system]
